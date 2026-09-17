@@ -1,0 +1,187 @@
+# Knowledge model as executable configuration.
+#
+# The Change API validator reads this file; it is not documentation. Every table
+# here corresponds to a requirement in docs/kc-agent-frs.md v0.3:
+#   node_types          FR-4.1, FR-5.2 (visibility defaults), FR-14.1 (TTL)
+#   document_subtypes   FR-4.1, FR-5.2
+#   edges               FR-4.2, FR-4.9 (domain, range, cardinality)
+#   properties          FR-4.9 (single- vs multi-valued)
+#   authority           FR-6.13 (default order and per-property overrides)
+#
+# Changing this file is a T5 schema change (FR-7.3): human approval plus a
+# change record. Entries marked "provisional" await Phase 0 review (§20, DR3,
+# DR4) or a Phase 2 re-baseline (FR-14.1).
+
+version: 1
+
+visibility_classes: [public, topology, restricted]
+
+# Properties a topology node exposes to a caller outside its BU (FR-5.2).
+# Anything not listed here is withheld, including artifacts (FR-9.4).
+topology_whitelist:
+  fields: [id, type, subtype, name, status, bu_owner, live]
+  edges: [OWNED_BY]
+
+node_types:
+  Service:        { visibility: topology,   ttl_days: 7 }
+  Component:      { visibility: restricted, ttl_days: 30, ttl_status: provisional }
+  API:            { visibility: topology,   ttl_days: 7 }
+  Endpoint:       { visibility: topology,   ttl_days: 7,  visibility_status: provisional }
+  Topic:          { visibility: topology,   ttl_days: 7,  visibility_status: provisional }
+  Requirement:    { visibility: restricted, ttl_days: 30 }
+  TestCase:       { visibility: restricted, ttl_days: 30, ttl_status: provisional }
+  TestRun:        { visibility: restricted, ttl_days: 30, ttl_status: provisional }
+  Defect:         { visibility: restricted, ttl_days: 30, ttl_status: provisional }
+  Document:       { visibility: restricted, ttl_days: 90 }
+  Environment:    { visibility: restricted, ttl_days: 30, ttl_status: provisional }
+  Team:           { visibility: topology,   ttl_days: 30, visibility_status: provisional, ttl_status: provisional }
+  BusinessGroup:  { visibility: public,     ttl_days: 30, visibility_status: provisional, ttl_status: provisional }
+  DataEntity:     { visibility: restricted, ttl_days: 30, ttl_status: provisional }
+
+# Document subtypes override the Document default (FR-4.1, FR-5.2).
+document_subtypes:
+  page:          { visibility: restricted }
+  adr:           { visibility: restricted }
+  incident:      { visibility: restricted }
+  standard:      { visibility: public }
+  glossary_term: { visibility: public }
+
+# Content classes that are embedded; everything else is lexical only (FR-6.8).
+embedded_document_subtypes: [page, adr, incident]
+
+# FR-4.9. cardinality: "one" means at most one live edge of this type per
+# source node; a second open relationship claim with a different target is a
+# contradiction (FR-6.11).
+edges:
+  DEPENDS_ON:
+    from: [Service, Component]
+    to: [Service, Component, API, DataEntity]
+    cardinality: many
+  CALLS:
+    from: [Service, Component]
+    to: [API, Endpoint]
+    cardinality: many
+  PUBLISHES_TO:
+    from: [Service, Component]
+    to: [Topic]
+    cardinality: many
+  CONSUMES_FROM:
+    from: [Service, Component]
+    to: [Topic]
+    cardinality: many
+  VALIDATES:
+    from: [TestCase]
+    to: [Requirement]
+    cardinality: many
+  COVERS:
+    from: [TestCase]
+    to: [API, Endpoint]
+    cardinality: many
+  RAISED_AGAINST:
+    from: [Defect]
+    to: [Service, Component, API, Endpoint, Requirement]
+    cardinality: many
+  IMPLEMENTS:
+    from: [Service, Component]
+    to: [API, Requirement]
+    cardinality: many
+  OWNED_BY:
+    from: [Service, Component, API, Topic, DataEntity, Environment, Document]
+    to: [Team]
+    cardinality: one
+  DOCUMENTS:
+    from: [Document]
+    to: [Service, Component, API, Endpoint, Topic, Requirement, TestCase, TestRun,
+          Defect, Environment, Team, BusinessGroup, DataEntity]
+    cardinality: many
+  SUPERSEDES:
+    from: [Service, Component, API, Endpoint, Requirement, Document]
+    to: [Service, Component, API, Endpoint, Requirement, Document]
+    cardinality: many
+    same_type_only: true
+  DERIVED_FROM:
+    from: [Requirement, TestCase, DataEntity]
+    to: [Requirement, Document, DataEntity]
+    cardinality: many
+  PART_OF:
+    pairs:
+      - { from: Endpoint, to: API }
+      - { from: Component, to: Service }
+    cardinality: one
+  EXECUTES:
+    from: [TestRun]
+    to: [TestCase]
+    cardinality: one
+  DEPLOYED_TO:
+    from: [Service, Component]
+    to: [Environment]
+    cardinality: many
+  MEMBER_OF:
+    from: [Team]
+    to: [BusinessGroup]
+    cardinality: one
+  READS:
+    from: [Service, Component, Endpoint]
+    to: [DataEntity]
+    cardinality: many
+  WRITES:
+    from: [Service, Component, Endpoint]
+    to: [DataEntity]
+    cardinality: many
+
+# FR-4.9 MVP property set. "*" applies to every node type. A property absent
+# from this table is off-schema and its claim is rejected (FR-7.8, AT-17).
+properties:
+  "*":
+    name:   { cardinality: single, kind: label, max_length: 200 }
+    status: { cardinality: single, kind: enum }
+  API:
+    version:   { cardinality: single, kind: label }
+    base_path: { cardinality: single, kind: label }
+  Endpoint:
+    method: { cardinality: single, kind: enum }
+    path:   { cardinality: single, kind: label }
+  Requirement:
+    key:      { cardinality: multi,  kind: label }
+    priority: { cardinality: single, kind: enum }
+  Defect:
+    key:      { cardinality: multi,  kind: label }
+    severity: { cardinality: single, kind: enum }
+  TestCase:
+    key:       { cardinality: multi,  kind: label }
+    framework: { cardinality: single, kind: label }
+    file_path: { cardinality: multi,  kind: label }
+  TestRun:
+    result:      { cardinality: single, kind: enum }
+    executed_at: { cardinality: single, kind: timestamp }
+  Topic:
+    broker: { cardinality: single, kind: label }
+  Environment:
+    tier: { cardinality: single, kind: enum }
+  Document:
+    url: { cardinality: single, kind: label }
+  DataEntity:
+    classification: { cardinality: single, kind: enum }
+
+# Indexed properties (FR-4.7 storage constraint, FR-11.9). Only what traversal
+# or filtering uses; the rest live unindexed in the props document.
+indexed_properties: [name, status]
+
+# FR-6.13. Higher rank number wins. Overrides are keyed "NodeType.property"
+# or an edge type, and take precedence over the default order.
+authority:
+  default_order:
+    cmdb: 50
+    git: 40          # code, OpenAPI specs and test code
+    jira: 30
+    ado: 30
+    confluence: 20
+    chat: 10
+  overrides:
+    "Requirement.status": { jira: 60 }
+    "Defect.severity": { jira: 60 }
+    "TestCase.framework": { git: 60 }
+    "TestCase.file_path": { git: 60 }
+  # A human-confirmed claim outranks any claim whose valid_from precedes the
+  # confirmation, and no claim with a later valid_from (FR-6.13).
+  human_confirmed_rank: 100

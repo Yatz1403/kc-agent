@@ -1,0 +1,123 @@
+# Write identities as executable configuration (FR-7.2).
+#
+# The Change API reads this file to decide whether a caller may append an event
+# at all, and whether the event is subject to the tier gate (FR-7.3) and
+# dry-run (FR-7.7). v0.1 allowed only the Curator to write, which contradicted
+# the kill switch (FR-7.6, AT-18) and left ingestion, the sweeps, reviewers and
+# rollback with no legal write path.
+#
+# An identity absent from this table may append nothing (AT-4). There is no
+# wildcard and no default-allow.
+
+version: 1
+
+operations:
+  # Claim operations, subject-scoped by the rules below.
+  - add_claim
+  - update_claim_same_source
+  - close_claim
+  - supersede_claim_cross_source
+  - merge_nodes
+  - split_node
+  # Registries and indexes.
+  - source_key_mapping
+  - alias_rule
+  - chunk_add
+  - chunk_retract
+  # Visibility.
+  - visibility_tighten
+  - visibility_loosen
+  # Quality signals.
+  - quality_signal
+  # Administrative.
+  - rollback
+  - config_change_record
+  - schema_change
+  - bulk_reprocess
+  - erasure
+
+identities:
+  kc-ingest:
+    description: Fast path. Deterministic ingestion and LLM extraction of free text.
+    tier_gated: false
+    dry_run_applies: false
+    may:
+      - add_claim
+      - update_claim_same_source
+      - close_claim
+      - source_key_mapping
+      - chunk_add
+      - chunk_retract
+      - visibility_tighten
+    # A claim may only be written for a source object this identity ingested.
+    constraints:
+      own_source_objects_only: true
+
+  kc-curator:
+    description: Applies proposals that passed gate.evaluate (FR-7.14).
+    tier_gated: true
+    dry_run_applies: true
+    may:
+      - add_claim
+      - close_claim
+      - supersede_claim_cross_source
+      - merge_nodes
+      - split_node
+      - alias_rule
+      - visibility_loosen
+      - quality_signal
+    constraints:
+      requires_gate_decision: true
+      requires_base_version: true
+
+  kc-maintenance:
+    description: Nightly staleness sweep and other T1 signals (FR-14.1).
+    tier_gated: false
+    dry_run_applies: false
+    may:
+      - quality_signal
+    constraints:
+      t1_only: true
+
+  kc-review:
+    description: Applies proposals a human approved or modified (FR-9.14).
+    tier_gated: false
+    dry_run_applies: false
+    may:
+      - add_claim
+      - close_claim
+      - supersede_claim_cross_source
+      - merge_nodes
+      - split_node
+      - alias_rule
+      - visibility_loosen
+      - visibility_tighten
+    constraints:
+      requires_review_decision: true
+      requires_base_version: true
+      provenance_class: human-confirmed
+
+  kc-operator:
+    description: Rollback, configuration records and T5 actions.
+    tier_gated: false
+    dry_run_applies: false
+    may:
+      - rollback
+      - config_change_record
+      - schema_change
+      - bulk_reprocess
+      - erasure
+      - visibility_tighten
+    constraints:
+      requires_change_record: true
+
+# Identities that exist but may never append. Listed explicitly so that a
+# rejection is a matched rule rather than a fall-through (AT-4).
+denied:
+  - kc-resolver
+  - kc-reconciler
+  - kc-verifier
+  - kc-prospector
+  - kc-retrieval-critic
+  - kc-schema-steward
+  - consumer-app
