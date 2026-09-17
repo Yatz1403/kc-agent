@@ -1,9 +1,11 @@
 # Enterprise Knowledge Context (KC) Agent — Functional Requirements
 
-**Version:** 0.2 (MVP)
-**Status:** Draft for implementation
-**Supersedes:** 0.1
+**Version:** 0.3 (MVP)
+**Status:** Approved for Phase 0/1 implementation
+**Supersedes:** 0.2, 0.1
 **Audience:** Implementation agent (GitHub Copilot) and reviewing engineers
+
+The document version and the wire-format version are independent: this is document 0.3, and the OKF contract it defines is still `okf_version` **0.2** (§9). Bumping the document does not bump the contract.
 
 ---
 
@@ -12,7 +14,7 @@
 - **Numbering is stable.** Every v0.1 ID (FR, NFR, AT, §) keeps its meaning. New requirements take the next free number in their section. No requirement is withdrawn in 0.2; a requirement withdrawn later stays in place, marked *Withdrawn in x.y — see FR-n*.
 - **Tags.** A requirement changed in this version carries *Changed in 0.2* under its heading; a new one carries *New in 0.2*. Both name the source of the change. Untagged requirements are unchanged from 0.1.
 - **The delta.** `git diff main -- docs/kc-agent-frs.md` shows every textual change against v0.1.
-- **Proposed values.** Numbers marked *(proposed)* are placeholders chosen while drafting. They must be confirmed or replaced at Phase 0 review (§20, DR8).
+- **Numbers.** Thresholds follow the three-tier policy in §19: fixed guardrails, targets set from the first measurement, or tracked with no gate until a baseline exists. A number marked *(provisional)* is a placeholder awaiting its baseline; one marked *(guardrail)* is fixed now and needs none.
 
 ### Source codes
 
@@ -24,6 +26,22 @@
 | DR1–DR11 | Added while drafting 0.2 and not yet reviewed (§20) |
 
 Decisions: **D1** change log is authoritative, all other stores are projections, a reconciliation job repairs drift · **D2** per-BU envelope keys plus per-person keys · **D3** snapshot validation, retention and full replay from origin · **D4** graph holds the highest-authority open claim; claim store read only with an explicit time scope; indexed current-claim filter · **D5** object-level source permissions checked, container-level ignored unless unmapped · **D6** Git test code is the MVP TestCase source · **D7** add Topic; Standard and GlossaryTerm as Document subtypes; defer Person · **D8** cross-BU approver policy configurable.
+
+---
+
+## Changes from v0.2
+
+Owner decisions, 17 Sep 2026. Each closes an item that v0.2 left open or provisional.
+
+| # | Change | Requirements | Why | What breaks if reverted |
+|---|---|---|---|---|
+| 1 | Inline current-claim metadata held as one `props` document per node, not one column per field per property; only traversal- and filter-relevant properties indexed | FR-4.7 | DR2 accepted, with a storage constraint | Adding a property changes the physical schema, so the table migrates every time the model grows |
+| 2 | Audit record fixed at caller, scope, cache epoch, sequence number and what was returned; exclusion data derived offline only | FR-15.2, §20 DR7 | DR7 accepted as a deliberate deviation from the v0.1 review | Someone "fixes" in-path counting back and reopens the AT-6 timing channel |
+| 3 | Three-tier threshold policy: guardrails fixed now, targets set from the first measurement, the rest tracked without a gate | §19, FR-5.9, FR-13.4, FR-14.1 | A threshold cannot be set before the first measurement; saying so is policy, not a gap | Invented targets get enforced, or real numbers are quietly renegotiated after the results are in |
+| 4 | Phase 3 gate replaced with blinded pairwise preference: 40 backlog tasks, two arms, two blinded reviewers, third adjudicates, win-or-tie ≥ 80% and strict win ≥ 40% | §19 | A percentage-improvement metric invents its effect size, and p < 0.05 needs more hand-labelled tasks than is realistic | The hard gate becomes unmeasurable at the sample size available and gets waived |
+| 5 | Approval expiry set to 5 business days, auto-escalating to the owning team's manager; the clock freezes under the kill switch and restarts on release | FR-10.5 | Open items had no expiry owner and no clock semantics | Approvals sit indefinitely, or expire while the system that would apply them is switched off |
+| 6 | TTLs: v0.1 defaults kept, every remaining node type provisionally 30d, re-baselined at Phase 2 from observed change rates | FR-14.1 | Guessing per-type TTLs twice is worse than measuring once | The staleness sweep runs on numbers nobody has checked against real change rates |
+| 7 | MVP persistence decided: one PostgreSQL instance for log, claim store, graph projection, alias registry, lexical and vector indexes, with row-level security as the in-query entitlement filter | §21, FR-5.4, FR-5.6 | B3 gated the store choice and was blocking the build | The build stalls, or a graph database is bought before there is evidence it is needed |
 
 ---
 
@@ -251,6 +269,9 @@ The graph is a projection of the change log, holding exactly one representation 
 2. For a **single-valued** property (FR-4.9) the current value is that of the highest-authority open claim, ranked per FR-6.13. Ties break by later `valid_from`, then by lexically smaller `claim_id`. Where more than one open claim exists for that property, it MUST be marked `contested`.
 3. For a **multi-valued** property the graph holds the values of all open claims.
 4. Each value MUST carry its claim's `claim_id`, `provenance_class`, `source_system`, `source_instance`, `source_id`, `valid_from`, `confidence` and `extraction_method`, so that the serve path can assemble provenance without reading the claim store (FR-11.8).
+   **Storage constraint.** This metadata MUST be held in a single `props` document per node, keyed by property name:
+   `{"<property>": {"value": ..., "claim_id": ..., "source_system": ..., "provenance_class": ..., "confidence": ..., "valid_from": ...}}`.
+   It MUST NOT be spread across one column per field per property, which would change the physical schema every time a property is added. The row is wide; the schema is fixed. Only the properties that traversal or filtering actually uses MUST be indexed (FR-11.9), and those indexes are configuration (NFR-4).
 5. **Edges:** one edge per `(from_id, to_id, edge_type)`, carrying the metadata of its highest-authority open relationship claim under the same rule. Its `valid_from` is the earliest `valid_from` among its claims; `valid_to` is null while any relationship claim is open, otherwise the latest `valid_to`. Closed edges remain in the graph and are excluded by the current-claim filter (FR-11.9).
 6. Nodes that are not live remain in the graph with `live = false`.
 
@@ -356,7 +377,7 @@ An event from a container with no BU mapping MUST be quarantined: not extracted,
 ### FR-5.4 — Pre-filtering, not post-filtering
 *Changed in 0.2 — M6, D1.*
 
-The entitlement filter MUST be applied **inside** the datastore query, before traversal. Post-filtering of returned results is prohibited. The liveness check of FR-11.10 operates on results that namespace selection has already entitlement-scoped and is not post-filtering under this requirement.
+The entitlement filter MUST be applied **inside** the datastore query, before traversal. Post-filtering of returned results is prohibited. On PostgreSQL (§21) this MUST be implemented with row-level security policies, so the planner applies the filter as part of the query rather than the application applying it by convention. The liveness check of FR-11.10 operates on results that namespace selection has already entitlement-scoped and is not post-filtering under this requirement.
 
 **Acceptance:** a red-team test suite MUST verify no leakage via (a) direct query, (b) traversal, (c) metadata inference, (d) error messages, (e) latency and token-count side channels. The timing test MUST be statistical: response-time distributions for requests naming a restricted node in another BU and requests naming a nonexistent node MUST be indistinguishable by a two-sample Kolmogorov–Smirnov test at α = 0.01 over at least 1,000 requests per arm (proposed). The suite MUST run against the synthetic BU-B fixture from Phase 1 (§17).
 
@@ -369,6 +390,8 @@ An application-only token MUST be rejected on `kc.context.retrieve` and `kc.cont
 
 ### FR-5.6 — Index namespacing
 Vector and lexical indexes MUST be physically separated per BU, plus a shared `commons` namespace. Queries fan out only to namespaces the caller is entitled to, plus `commons`.
+
+Namespace separation and row-level security (FR-5.4) are deliberately redundant and both MUST be kept: row-level security protects against a query bug, and separate namespaces protect against a row-level-security misconfiguration.
 
 ### FR-5.7 — Agent entitlement
 *Changed in 0.2 — M13.*
@@ -397,7 +420,7 @@ Rules:
 
 1. An object whose object-level permissions are narrower than its BU MUST NOT be fetched into the raw store, extracted, embedded or indexed. The skip MUST be logged with reason code `OBJECT_RESTRICTED`, its source key and its container.
 2. When an already-ingested object becomes restricted, `kc-ingest` MUST close its claims and retract its chunks immediately, with no tier gate (FR-7.3).
-3. The skip rate (FR-14.3, metric 10) above a configured threshold (default 5%, proposed) MUST raise an alarm: it indicates a BU mapping error, not restricted content.
+3. The skip rate (FR-14.3, metric 10) above a configured threshold (5%) MUST raise an alarm: it indicates a BU mapping error, not restricted content. This is a fixed guardrail, not a provisional target (§19, threshold policy).
 
 ### FR-5.10 — Identity to scope
 *New in 0.2 — M11.*
@@ -1130,8 +1153,8 @@ Human approval MUST use the A2A `input-required` task state:
 
 1. When the gate requires a human (FR-7.3), the Curator creates a task under `kc.review` carrying the `proposal` (FR-9.13) with evidence filtered to what the reviewer may see (FR-7.13), and sets the task to `input-required`.
 2. The review UI, acting as A2A client, responds in that task with a `review_decision` (FR-9.14). The approver policy (FR-7.12) decides when enough decisions have been received.
-3. Task state MUST persist until the policy is satisfied or the task expires. Expiry is configuration (default 14 days, proposed); an expired task completes with an `escalation` carrying reason `APPROVAL_EXPIRED`, and nothing is applied.
-4. While the kill switch is engaged, decisions are recorded but not applied (FR-7.6); on release they are re-validated against base versions (FR-7.7).
+3. Task state MUST persist until the policy is satisfied or the task expires. Expiry is **5 business days**, configuration (NFR-4). On expiry the task MUST auto-escalate to the manager of the owning team (`OWNED_BY` → Team → manager, resolved through the directory) with an `escalation` carrying reason `APPROVAL_EXPIRED`. Nothing is applied by the expiry itself.
+4. While the kill switch is engaged, pending approval tasks freeze: decisions are recorded but not applied (FR-7.6), and the expiry clock stops. On release the clock **restarts** from the full 5 business days, and every recorded decision is re-validated against base versions (FR-7.7) before it is applied.
 
 ### FR-10.6 — Context grouping
 *Changed in 0.2 — M5.*
@@ -1299,7 +1322,7 @@ Promotion from `agent-derived` to `human-confirmed` MUST require explicit human 
 ### FR-13.4 — Ratio alarm
 *Changed in 0.2 — M4, B3.*
 
-The system MUST track the ratio of open `agent-derived` claims to open `source-derived` claims and raise an alarm above a configured threshold (default 15%). LLM extraction output is `source-derived` (FR-6.5) and counts in the denominator: it quotes a source span, so classing it as agent-derived would trip this alarm on Confluence ingestion alone.
+The system MUST track the ratio of open `agent-derived` claims to open `source-derived` claims and raise an alarm above a configured threshold (15%). This is a fixed guardrail, not a provisional target: it needs no baseline (§19, threshold policy). LLM extraction output is `source-derived` (FR-6.5) and counts in the denominator: it quotes a source span, so classing it as agent-derived would trip this alarm on Confluence ingestion alone.
 
 ---
 
@@ -1310,11 +1333,14 @@ The system MUST track the ratio of open `agent-derived` claims to open `source-d
 
 A nightly job, writing as `kc-maintenance` (FR-7.2), MUST flag nodes exceeding their per-type TTL. Defaults, all configuration:
 
-| Node types | TTL |
-|---|---|
-| Service, API, Endpoint, Topic, Component, Environment | 7d |
-| Requirement, TestCase, TestRun, Defect, DataEntity | 30d (proposed for TestRun, DataEntity) |
-| Document, Team, BusinessGroup | 90d (proposed for Team, BusinessGroup) |
+| Node types | TTL | Status |
+|---|---|---|
+| Service, API, Endpoint, Topic (service topology) | 7d | v0.1 default, kept |
+| Requirement | 30d | v0.1 default, kept |
+| Document (all subtypes) | 90d | v0.1 default, kept |
+| Component, Environment, DataEntity, TestCase, TestRun, Defect, Team, BusinessGroup | 30d | provisional |
+
+The provisional 30d MUST be re-baselined at Phase 2 from the observed change rate per node type, rather than guessed again (§19, threshold policy).
 
 ### FR-14.2 — Reconciliation sweep
 *Changed in 0.2 — B1, M8, M3.*
@@ -1363,9 +1389,11 @@ Agent prompts and completions MAY be retained only in the BU-partitioned decisio
 ### FR-15.2 — Audit
 *Changed in 0.2 — M9, DR7.*
 
-Every serve request MUST record: end user and application identity, effective scope, the request, the change-log sequence number the response was built from, the node IDs returned, and the artifact chunk IDs returned.
+Every serve request MUST record exactly: end user and application identity, effective scope, the request, the cache epoch, the change-log sequence number the response was built from, the node IDs returned, and the artifact chunk IDs returned. The sequence number is what makes offline replay possible, and the chunk IDs are the record of which content was disclosed; neither may be dropped.
 
 The record MUST NOT contain IDs or counts of nodes excluded by entitlement. Pre-filtering (FR-5.4) never produces that list, and computing it in-path would both place other BUs' identifiers in this caller's record and reintroduce a timing side channel. Where an investigation needs it, a privileged audit job MUST recompute it offline by replaying the request against the projections at the recorded sequence number; that job and its output are access-controlled and themselves audited.
+
+This is a **deliberate deviation** from the v0.1 review, which asked for per-BU counts of excluded nodes in the request record (§20, DR7). Counting in-path requires touching restricted nodes in order to count them, which is the timing side channel AT-6 exists to prevent. Do not restore in-path counting.
 
 ### FR-15.3 — Decision log
 *Changed in 0.2 — M13.*
@@ -1509,14 +1537,26 @@ Every MUST requirement is expected to map to at least one row here, or to be mar
 
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
-| 0 | Node, edge and property schema with the FR-4.9 tables; claim model; graph and claim store technology choice, with the decision recorded; change-log design including encryption key granularity (FR-5.11); Change API identity table; BU and IdP group mappings; visibility defaults; authority matrix; alias registry schema with BU labels; OKF v0.2 family draft; Agent Card drafts; pre-registered Phase 3 evaluation protocol; capacity assumptions (NFR-8); FR→AT traceability matrix; decisions on every §20 open item | All of it reviewed and signed off. Every MUST maps to at least one AT or is marked review-verified. A2A version pin confirmed (FR-10.1) |
-| 1 | Change API with validation; change log; projectors for graph, claim store, lexical index and alias registry, with idempotency, dead-lettering, reconciliation and validated snapshots; deterministic ingestion from Git (OpenAPI, manifests, test code, collections) and Jira; raw store partitioned and encrypted; trace redaction; synthetic BU-B fixture; basic escalation queue | Golden set of 200 entities across Git and Jira, labelled independently by two engineers from the owning BU with disagreements adjudicated by the spec owner: **zero false merges**, recall ≥ 0.90 (proposed). Full replay from origin reproduces live projection checksums. Phase 1 ATs pass |
-| 2 | Serve path (FR-11.2) with scoped resolution, current-claim and liveness filters, and caching; on-behalf-of identity; OKF assembly; Curator external Agent Card; fixed question set of ≥ 100 questions with labelled relevant nodes, written before the serve path is tuned (proposed) | recall@10 ≥ 0.80 on the fixed set (proposed); nDCG@10 recorded as the baseline; NFR-1 met; Phase 2 ATs pass. **OKF v0.2 family and Curator cards frozen at this exit** (FR-9.2) |
-| 3 | One consumer wired: the API testing solution | Pre-registered evaluation: ≥ 50 real test-planning tasks (proposed), run with and without KC context using the same consumer model and prompt, scored by reviewers blind to the arm. Primary metric: share of relevant endpoints and linked requirements covered by the generated test plan, against a labelled reference. Pass: relative improvement ≥ 15% with a one-sided paired test at p < 0.05 (proposed). Secondary: reviewer acceptance rate |
+| 0 | Node, edge and property schema with the FR-4.9 tables, expressed as **executable configuration the validator reads**, not prose; claim model; persistence decided (§21); change-log design including encryption key granularity (FR-5.11); Change API identity table; BU and IdP group mappings; visibility defaults; authority matrix; alias registry schema with BU labels; OKF v0.2 family draft; Agent Card drafts; pre-registered Phase 3 evaluation protocol; capacity assumptions (NFR-8); FR→AT traceability matrix; decisions on every §20 open item | All of it reviewed and signed off. Every MUST maps to at least one AT or is marked review-verified. A2A version pin confirmed (FR-10.1) |
+| 1 | Change API with validation; change log; projectors for graph, claim store, lexical index and alias registry, with idempotency, dead-lettering, reconciliation and validated snapshots; deterministic ingestion from Git (OpenAPI, manifests, test code, collections) and Jira; raw store partitioned and encrypted; trace redaction; synthetic BU-B fixture; basic escalation queue | Golden set of 200 entities across Git and Jira, labelled independently by two engineers from the owning BU with disagreements adjudicated by the spec owner. Gate: **merge precision ≥ 0.99** (guardrail — a false merge is a segregation breach, not a quality issue). Resolution **recall is measured, not gated, at this exit**; the standing target is then set 5 points above the measured value and enforced from Phase 2 onward. Full replay from origin reproduces live projection checksums. Phase 1 ATs pass |
+| 2 | Serve path (FR-11.2) with scoped resolution, current-claim and liveness filters, and caching; on-behalf-of identity; OKF assembly; Curator external Agent Card; fixed question set of ≥ 100 questions with labelled relevant nodes, written before the serve path is tuned (proposed) | recall@10 and nDCG@10 measured on the fixed set and recorded as the baseline — **tracked, not gated**, because no threshold can be set before the first measurement. Resolution recall meets the target set at the Phase 1 exit. NFR-1 met; Phase 2 ATs pass. **OKF v0.2 family and Curator cards frozen at this exit** (FR-9.2). TTL defaults re-baselined from observed change rates (FR-14.1) |
+| 3 | One consumer wired: the API testing solution | **Blinded pairwise preference**, pre-registered before any task is run: 40 tasks drawn from the API testing solution's real backlog; two arms, with and without fabric context, same consumer model and prompt; each pair reviewed independently by two engineers blind to the arm, disagreements adjudicated by a third. Gate: the with-context arm **wins or ties on ≥ 80% of tasks and strictly wins on ≥ 40%**. A percentage-improvement metric with a significance test was rejected: the effect size would be invented, and p < 0.05 needs a larger hand-labelled set than is realistic |
 | 4 | Confluence ingestion with the source-permission rule, grounded LLM extraction and mention candidates; selective embedding | LLM-free ingestion rate ≥ 85% on the FR-6.14 denominator; source skip rate below threshold; human queue populated with real hard cases; Phase 4 ATs pass |
-| 5 | Curator orchestration and deterministic gate; Resolver as a full agent; approval tasks; dry-run; kill switch; rollback | Resolver agreement with human decisions ≥ 0.85 over ≥ 200 reviewed proposals, with zero approved false merges (proposed); Phase 5 ATs pass |
+| 5 | Curator orchestration and deterministic gate; Resolver as a full agent; approval tasks; dry-run; kill switch; rollback | Resolver agreement with human decisions measured over ≥ 200 reviewed proposals and recorded as the baseline (tracked, not gated). Gate: **zero approved false merges** (guardrail). Phase 5 ATs pass |
 | — | **MVP boundary** | Phases 0–5 constitute the MVP (§17) |
-| 6 | Automated T1/T2 application of agent proposals; remaining spokes as live agents | Human intervention rate down ≥ 25% over 8 weeks (proposed) with no rise in the rollback rate |
+| 6 | Automated T1/T2 application of agent proposals; remaining spokes as live agents | Human intervention rate falling over 8 weeks against the Phase 5 baseline, with no rise in the rollback rate (guardrail). The size of the fall is set from the Phase 5 baseline, not fixed here |
+
+### Threshold policy
+
+*New in 0.3 — owner decision.* A threshold cannot be set before the thing has been measured once, so every number in this specification sits in one of three tiers. This is policy, not an omission.
+
+| Tier | Numbers | When set |
+|---|---|---|
+| **Guardrail — fixed now** | Merge precision ≥ 0.99; agent-derived claim ratio alarm at 15% (FR-13.4); source-permission skip-rate alarm at 5% (FR-5.9); zero approved false merges; no rise in rollback rate | Fixed in this version. These are safety limits, not performance targets, so they need no baseline |
+| **Set from the first measurement** | Entity resolution recall (measured at the Phase 1 exit, target then set 5 points above the measured value); TTL defaults (re-baselined at Phase 2 from observed change rates) | At the exit that first measures them |
+| **Tracked, no gate yet** | recall@10 and nDCG@10 (Phase 2 baseline); Resolver agreement rate (Phase 5 baseline); human intervention rate (Phase 6) | Gated only once a baseline exists |
+
+A number marked *(provisional)* elsewhere in this document belongs to the second or third tier: it is a placeholder for planning and MUST NOT be treated as an agreed target. A number marked *(guardrail)* is fixed.
 
 **Phase 3 is a hard gate.** If fabric context does not measurably improve the consumer's output, the knowledge model is wrong and no further agent work should proceed until it is corrected. "Measurably" is defined by the protocol pre-registered in Phase 0, not decided after the results are seen.
 
@@ -1533,13 +1573,41 @@ These were added while drafting v0.2 and have **not** been reviewed. Each needs 
 | ID | Item | Where | Why it was added |
 |---|---|---|---|
 | DR1 | An edge is visible only when both endpoints are visible to the caller | FR-5.12 | FR-5.4(b) forbids leakage through traversal, but v0.1 had no rule for edges |
-| DR2 | The graph stores current-claim metadata (`claim_id`, provenance, source, `valid_from`, confidence) inline with each value | FR-4.7 item 4 | Required so provenance can be assembled without reading the claim store, which D4 forbids without `as_of` |
+| DR2 | The graph stores current-claim metadata (`claim_id`, provenance, source, `valid_from`, confidence) inline with each value | FR-4.7 item 4 | **Reviewed and accepted, with a storage constraint:** one `props` document per node, not one column per field per property, so adding a property does not change the physical schema. Required because D4 forbids reading the claim store without `as_of` |
 | DR3 | Default visibility for the types v0.1 did not cover: Topic, Endpoint and Team `topology`; BusinessGroup `public`; Component, Environment, DataEntity, TestRun and Document `page`/`adr`/`incident` `restricted` | FR-5.2 | v0.1 gave defaults for 5 of 13 node types |
 | DR4 | The contents of the edge domain/range, cardinality and property tables | FR-4.9 | Needed to define off-schema and contradiction; the entries are a first draft and the domain expert should check them |
 | DR5 | Document subtypes `page`, `adr` and `incident` alongside `standard` and `glossary_term` | FR-4.1 | FR-6.8 and the OKF artifact kinds already name ADRs and incident notes |
 | DR6 | A `kc.review` skill on the internal Curator card | FR-10.3, FR-10.5 | FR-10.5 approval tasks need a skill to live on and a client to answer them |
-| DR7 | Excluded-node audit data computed offline by replay rather than recorded per request | FR-15.2 | Counting excluded nodes in-path means touching restricted nodes, which reopens the timing side channel AT-6 forbids. This deviates from the review's wording, which asked for per-BU counts in the record |
-| DR8 | Every numeric value marked *(proposed)* | throughout | Measurable gates need numbers; these are placeholders, not recommendations |
+| DR7 | Excluded-node audit data computed offline by replay rather than recorded per request | FR-15.2 | **Reviewed and accepted as a deliberate deviation from the v0.1 review**, which asked for per-BU counts in the request record. Counting in-path means touching restricted nodes to count them, which reopens the timing side channel AT-6 forbids. The request record holds caller, scope, cache epoch, sequence number and what was returned; everything about exclusions is derived later in a privileged job. Do not restore in-path counting |
+| DR8 | Numeric values | throughout | **Superseded by the threshold policy in §19.** Guardrails are fixed now; targets are set from the first measurement; the rest are tracked without a gate. Values still marked *(provisional)* are planning placeholders, not agreed targets |
 | DR9 | Resolution candidates limited to the event's BU and `commons` | FR-6.9 | Linking at ingest is automatic and ungated, so cross-BU linking would be a false merge in effect |
 | DR10 | Claim kinds (identity, property, relationship), node liveness from open identity claims, and one graph edge per `(from, to, type)` aggregating its relationship claims | FR-4.6, FR-4.7 | Needed to define deletion, liveness, and what happens when two sources assert the same edge |
 | DR11 | Git repositories whose read access is narrower than the mapped BU treated as object-level, not container-level | FR-5.9 | D5 listed private repos as object-level while FR-5.3 maps repos as containers; this resolves the overlap in favour of D5 |
+
+---
+
+## 21. MVP Persistence Decision
+
+*New in 0.3 — owner decision.* FR-4.7 and FR-4.8 gated this choice; it is now made, and Phase 0 records the rationale rather than re-opening it.
+
+**One PostgreSQL instance holds everything for the MVP.**
+
+| Component | Implementation |
+|---|---|
+| Change log (FR-7.1) | Append-only table, authoritative, never truncated |
+| Claim store (FR-4.8) | Tables in the same database, so the log append and the claim projection commit in one transaction |
+| Graph projection (FR-4.7) | Node and edge tables; traversal by recursive CTE |
+| Alias registry (FR-11.3) | Table, with `bu_owner` and `visibility_class` per row |
+| Lexical index (FR-6.8) | Native `tsvector` — no second service |
+| Vector index (FR-6.8) | `pgvector`, same database |
+| Entitlement pre-filter (FR-5.4) | Row-level security policies, applied by the planner in-query |
+| Per-BU index namespacing (FR-5.6) | Separate namespaces retained alongside row-level security |
+
+**Why this is a decision rather than a compromise.** The graph and both indexes are projections of the change log (FR-7.1). If recursive-CTE traversal becomes the bottleneck at hop 3 (`impact_analysis`, FR-11.4), the graph projection is rebuilt into a dedicated graph database from the log and nothing else changes: no re-ingestion, no contract change, no consumer change. The log-first model bought that option, and the MVP takes advantage of it instead of paying for a graph database before there is evidence it is needed.
+
+**What must hold for the swap-out to stay cheap:**
+
+1. No component may read the graph tables directly except the serve path and the projectors (FR-7.1).
+2. Traversal MUST be expressed behind one interface, so the recursive CTE is replaceable without touching FR-11.2 step 7.
+3. The current-claim and liveness filters MUST stay indexed in whatever store holds the projection (FR-11.9, AT-41).
+4. Only a single PostgreSQL instance is assumed for the MVP; NFR-8 capacity assumptions decide whether that holds beyond it.
