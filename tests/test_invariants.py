@@ -542,6 +542,98 @@ class TestTierGate:
         assert response["message_type"] == okf.CONTEXT_RESPONSE
 
 
+# --- AT-63: a replay bug must not undo a visibility class -------------------
+
+
+class TestAT63VisibilityReplayCannotLoosen:
+    """A segregation failure that arrives through the replay path, entirely
+    outside the entitlement code.
+
+    `visibility_tighten` replayed before the node it names used to update
+    nothing, and the later fold then set visibility from the type default —
+    so a `restricted` node came back as `topology` and became visible to every
+    BU. No entitlement check was wrong; the class it was checking was.
+    """
+
+    def _events(self, store: Store) -> list[dict]:
+        return [dict(row) for row in store.read_events(0, limit=10_000)]
+
+    def _load(self, target: Store, events: list[dict]) -> None:
+        with target.transaction() as conn:
+            for event in events:
+                conn.execute(
+                    "INSERT INTO change_log (event_id, op, identity, tier, payload, run_id,"
+                    " context_id, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (event["event_id"], event["op"], event["identity"], event["tier"],
+                     event["payload"], event["run_id"], event["context_id"],
+                     event["recorded_at"]),
+                )
+
+    def test_tighten_before_its_node_halts(self, loaded, tmp_path):
+        store, _ = loaded
+        events = self._events(store)
+        tighten = [e for e in events if e["op"] == "visibility_tighten"]
+        rest = [e for e in events if e["op"] != "visibility_tighten"]
+        assert tighten, "the fixture tightens one node; without it this test proves nothing"
+
+        replayed = Store(tmp_path / "at63.db")
+        replayed.init_schema()
+        self._load(replayed, tighten + rest)
+        result = GraphProjector(replayed).run_once()
+
+        assert result["halted"] is True, "an out-of-order tighten must halt, not be lost"
+        assert "sequence order" in (result.get("error") or "")
+        assert replayed.dead_letters(), "the event must be dead-lettered for inspection"
+
+    def test_the_node_is_never_left_visible_after_an_out_of_order_tighten(
+        self, loaded, tmp_path
+    ):
+        """The consequence, asserted directly: whatever the replay does, the
+        node must not end up readable outside its BU."""
+        store, built = loaded
+        hidden = built["anchors"]["bu-b"]["restricted_service"]
+        events = self._events(store)
+        tighten = [e for e in events if e["op"] == "visibility_tighten"]
+        rest = [e for e in events if e["op"] != "visibility_tighten"]
+
+        replayed = Store(tmp_path / "at63_visibility.db")
+        replayed.init_schema()
+        self._load(replayed, tighten + rest)
+        GraphProjector(replayed).run_once()
+
+        node = replayed.get_node(hidden)
+        if node is not None:
+            assert node.visibility_class == "restricted", (
+                "a halted replay must not leave the node projected as topology"
+            )
+            scope = ent.Scope(user="alice@bu-a", application="kc-cli",
+                              bus=("bu-a", "commons"))
+            assert ent.visibility_of(node.bu_owner, node.visibility_class, scope) is None
+
+    def test_in_order_replay_keeps_the_tightened_class(self, loaded, tmp_path):
+        store, built = loaded
+        hidden = built["anchors"]["bu-b"]["restricted_service"]
+        replayed = Store(tmp_path / "at63_inorder.db")
+        replayed.init_schema()
+        self._load(replayed, self._events(store))
+        assert GraphProjector(replayed).run_once()["halted"] is False
+        assert replayed.get_node(hidden).visibility_class == "restricted"
+
+    def test_a_later_refold_does_not_reset_the_class(self, loaded):
+        """The other half of the original bug: a fold after the tighten must
+        preserve it rather than re-deriving the type default."""
+        store, built = loaded
+        hidden = built["anchors"]["bu-b"]["restricted_service"]
+        claims = store.open_claims(hidden, kind="property")
+        target = next(c for c in claims if c.prop == "status")
+        ChangeAPI(store).submit(
+            "kc-ingest", "close_claim", closes=[target.claim_id],
+            payload={"valid_to": now()},
+        )
+        GraphProjector(store).run_once()
+        assert store.get_node(hidden).visibility_class == "restricted"
+
+
 # --- entitlement module has no post-filter ----------------------------------
 
 

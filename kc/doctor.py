@@ -81,16 +81,22 @@ def _python() -> dict[str, Any]:
     return _result("python version", PASS, detail)
 
 
-def _dependencies() -> dict[str, Any]:
+def _dependencies(package_root: Path | None = None) -> dict[str, Any]:
     """The skeleton must run with nothing installed.
 
     This reads what the code imports rather than what the process happens to
     have loaded: under a test runner the interpreter is full of other people's
     packages, and a check that measured `sys.modules` would report them.
+
+    `ast.walk` covers the whole tree, so an import inside a function is caught
+    too. That matters more than the module-level case: a lazy `import requests`
+    inside a connector's `fetch()` is invisible at module scope and is exactly
+    how a third-party dependency arrives. The report names the file so the
+    offending import can be found without grepping.
     """
     import ast
 
-    package_root = Path(__file__).parent
+    package_root = package_root or Path(__file__).parent
     external: dict[str, str] = {}
     for source in sorted(package_root.rglob("*.py")):
         try:

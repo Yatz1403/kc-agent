@@ -1528,6 +1528,7 @@ Every MUST requirement is expected to map to at least one row here, or to be mar
 | AT-60 | Cross-BU proposal shown to a BU-A reviewer | Only BU-A-entitled evidence shown; withheld evidence not counted | FR-7.13 | 5 | new |
 | AT-61 | Agent-derived claim ratio above threshold | Alarm raised | FR-13.4 | 5 | new |
 | AT-62 | Proposal carrying an agent-reported confidence value | Gate ignores it and computes confidence from cited evidence | FR-7.14, FR-6.12 | 5 | new |
+| AT-63 | `visibility_tighten` replayed before the event that created its node | Projector halts with "must be replayed in sequence order" and dead-letters the event; the node's visibility class is never re-derived from its type default, so a restricted node cannot reappear as `topology` | FR-5.2, FR-7.8 | 1 | new in 0.3 |
 
 ---
 

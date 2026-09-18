@@ -53,10 +53,16 @@ class GitConnector(Connector):
     creates_nodes = True
     creatable_types = ("API", "Endpoint", "Component", "TestCase", "Service")
     # Commit metadata moves on every push and says nothing about the artefact.
-    # `committed_at` is deliberately NOT volatile: it lands in every claim's
-    # valid_from, and a field that reaches a claim cannot be excluded from the
-    # hash without making content changes invisible (FR-6.2). The invariant test
-    # in tests/test_guards.py enforces that rule for every connector.
+    #
+    # `committed_at` is deliberately NOT volatile, and the rule it illustrates
+    # is general: a field that reaches a claim cannot be excluded from the hash.
+    # What makes it worth a comment is not that the hash would be wrong, but
+    # that the wrongness is invisible. Content changes, the projection does not,
+    # the event is dropped at change detection, nothing is ever closed, and
+    # every health metric reports healthy ingestion indefinitely. There is no
+    # error, no log line and no failing test unless one is written on purpose —
+    # which is why the invariant is derived per connector in
+    # tests/test_guards.py rather than left to discipline (FR-6.2, N1).
     volatile_fields = ("sha", "commit", "last_modified", "etag", "size", "url")
     extraction_version = "1"
 

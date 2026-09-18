@@ -244,3 +244,50 @@ class TestTaskDistribution:
         assert payload["dominant"] == "mention_candidate"
         assert payload["by_kind"]["mention_candidate"]["total"] == 3
         assert "thresholds" in payload["reading"]["mention_candidate"]
+
+
+class TestLazyImportDetection:
+    """A lazy `import requests` inside a connector's fetch() is invisible at
+    module scope, and is the likeliest way a third-party dependency arrives on
+    a machine where pip cannot reach an index."""
+
+    def _package(self, tmp_path, body: str):
+        root = tmp_path / "fakekc"
+        root.mkdir()
+        (root / "__init__.py").write_text("", encoding="utf-8")
+        (root / "connector.py").write_text(body, encoding="utf-8")
+        return root
+
+    def test_function_level_third_party_import_fails(self, tmp_path):
+        root = self._package(
+            tmp_path,
+            "def fetch(source_id):\n"
+            "    import requests  # the sneaky one\n"
+            "    return requests.get(source_id)\n",
+        )
+        check = doctor._dependencies(root)
+        assert check["status"] == "fail"
+        assert "requests" in check["detail"] and "connector.py" in check["detail"]
+
+    def test_module_level_third_party_import_fails(self, tmp_path):
+        root = self._package(tmp_path, "import httpx\n")
+        assert doctor._dependencies(root)["status"] == "fail"
+
+    def test_stdlib_and_kc_imports_pass(self, tmp_path):
+        root = self._package(
+            tmp_path,
+            "import json\n"
+            "from pathlib import Path\n"
+            "def load():\n"
+            "    from kc.config import loader\n"
+            "    return json, Path, loader\n",
+        )
+        assert doctor._dependencies(root)["status"] == "pass"
+
+    def test_unparseable_module_fails(self, tmp_path):
+        root = self._package(tmp_path, "def broken(:\n")
+        check = doctor._dependencies(root)
+        assert check["status"] == "fail" and "will not import" in check["remedy"]
+
+    def test_the_real_package_is_clean(self):
+        assert doctor._dependencies()["status"] == "pass"

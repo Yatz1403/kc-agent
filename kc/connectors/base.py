@@ -109,6 +109,13 @@ class Connector:
         Volatile fields are dropped before hashing. This is the difference
         between hash-diff dropping replays and never dropping anything: Jira
         touches `updated`, ranks and watcher lists on almost every write.
+
+        The invariant, in both directions: a change to anything `extract` reads
+        MUST change this hash, and a change to a declared volatile field MUST
+        NOT. Getting the first direction wrong fails silently — content
+        changes, the projection does not, the event is dropped, nothing is
+        closed, and ingestion reports healthy forever — so it is enforced by a
+        derived test over `self_check_samples`, not by review.
         """
         projected = _strip(obj.content, self.volatile_fields)
         # The body counts. Git keeps the artefact in `raw`, so hashing the
