@@ -22,7 +22,8 @@ python -m kc.cli query --identity alice@bu-a --intent impact_analysis \
 python -m kc.cli query --identity bob@bu-b --intent impact_analysis \
     --anchor ledger-api --summary
 python -m kc.cli health
-python -m pytest -q               # 104 tests, no network
+python -m kc.cli doctor           # pre-flight: paths, WAL, clock, config, connectors
+python -m pytest -q               # 156 tests, no network
 ```
 
 No install step and no virtual environment are required: nothing is imported
@@ -47,10 +48,12 @@ curl -s -X POST localhost:8080/okf/kc.context.retrieve \
 | `fixture` | Load BU-A, BU-B and commons, including a corroborated cross-BU edge |
 | `query` | One OKF `context_request`; `--summary` for a digest, otherwise the full envelope |
 | `health` | Metrics, guardrails, connector wiring, agent declarations, budget allocation |
-| `tasks` | The human queue: escalations, approvals, mention candidates |
+| `tasks` | The human queue: escalations, approvals, mention candidates. `--distribution` ranks kinds and says how to read them |
 | `work` | Curator dispatches open tasks to their spoke |
 | `project` | Apply pending change-log events to the projections |
 | `rebuild` | Rebuild every projection from the log and compare fingerprints (AT-28) |
+| `ingest` | Drive the fast path over a connector: `discover()` then `fetch()`, or `--from-file` / `--source-id`. `--dry-run` reports what would be written and appends nothing |
+| `doctor` | Pre-flight checks for a locked-down machine: writable paths, WAL, clock, config parse, connector reachability, offline extraction |
 | `flags` | Dry-run and the kill switch |
 | `serve` | HTTP endpoint for the two external skills |
 
@@ -83,6 +86,30 @@ def fetch(self, source_id: str) -> SourceObject:
     )
 ```
 
+### Seeing extraction before you wire anything
+
+`--from-file` takes a saved API response, so the extraction of a real ticket can
+be inspected before `fetch` exists:
+
+```bash
+curl -u "$USER:$TOKEN" "$KC_JIRA_BASE/rest/api/3/issue/LED-777" > LED-777.json
+python -m kc.cli ingest --connector jira --from-file LED-777.json --dry-run
+```
+
+```json
+{ "decision": "would_ingest", "bu_owner": "bu-a",
+  "would_write": { "nodes": {"Requirement": 1}, "chunks": 1,
+                   "properties": {"Requirement.status": 1, "Requirement.priority": 1} },
+  "would_close": [], "llm_used": false,
+  "sample_values": {"Requirement.status": "In Progress"} }
+```
+
+Drop `--dry-run` to append it. Run `python -m kc.cli doctor` first on a new
+machine: it reports whether the database path is writable, whether WAL works
+there, whether the clock is sane, whether the config parses, and whether each
+connector's API base is set and reachable — an unreachable base is a warning,
+not a failure, because the skeleton needs no network.
+
 Then drive it:
 
 ```python
@@ -93,6 +120,12 @@ from kc.stores.sqlite_store import Store
 fast = FastPath(Store("kc.db"))
 fast.ingest_object(connector.fetch("LED-101"))    # hash diff, extract, resolve, append
 ```
+
+Each connector also declares `self_check_samples()`: representative payloads
+that the hash-projection invariant test derives its cases from, and that
+`doctor` uses to prove the parsers work offline. A new connector cannot ship
+without them, because the test enumerates the registry and fails on the missing
+method.
 
 Two rules the seams enforce for you:
 
@@ -178,7 +211,9 @@ kc/ingest.py     the fast path
 kc/health.py     metrics and guardrails
 kc/fixture.py    synthetic BU-A / BU-B
 kc/cli.py
-tests/           104 tests: the named acceptance tests plus the structural ones
+kc/doctor.py     pre-flight checks
+tests/           156 tests: the named acceptance tests, the structural ones,
+                 and the guards in test_guards.py
 ```
 
 ## Moving to PostgreSQL

@@ -16,8 +16,10 @@ Every command takes `--db`, defaulting to kc.db in the working directory.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from kc.agents.curator import Curator
@@ -122,6 +124,140 @@ def _summary(response: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _result_row(outcome: Any) -> dict[str, Any]:
+    """An IngestResult as a dict, dropping the empty fields so a run of fifty
+    objects stays readable."""
+    row = dataclasses.asdict(outcome)
+    return {k: v for k, v in row.items() if v not in (None, [], 0, False)}
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    """Drive the fast path over discover() -> fetch() -> ingest.
+
+    `--dry-run` reports what would be written and appends nothing, so real
+    tickets can be inspected before any of it reaches the log.
+    """
+    from kc.connectors import registry as connector_registry
+    from kc.ingest import FastPath
+
+    store = Store(args.db)
+    connector = connector_registry.get(args.connector)
+    if connector is None:
+        _print({"error": "unknown connector", "known": sorted(connector_registry.all_connectors())})
+        return 2
+
+    fast = FastPath(store)
+
+    # --from-file needs no credentials: save a real API response to disk and
+    # dry-run the extraction before wiring fetch at all. This is the fastest
+    # way to see what a real ticket produces.
+    if args.from_file:
+        from kc.connectors.base import SourceObject
+
+        results: list[dict[str, Any]] = []
+        for path in args.from_file:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            obj = SourceObject(
+                source_system=args.connector,
+                source_instance=payload.get("source_instance", "manual"),
+                source_id=payload.get("source_id") or payload.get("key") or Path(path).stem,
+                container=payload.get("container")
+                or str(payload.get("source_id", payload.get("key", ""))).split("-")[0],
+                content=payload.get("content", payload),
+                raw=payload.get("raw", json.dumps(payload.get("content", payload))),
+                deleted=bool(payload.get("deleted")),
+            )
+            if args.dry_run:
+                results.append(fast.plan_object(obj))
+            else:
+                try:
+                    results.append(_result_row(fast.ingest_object(obj)))
+                except KCError as exc:
+                    results.append({"file": path, "rejected": type(exc).__name__,
+                                    "detail": str(exc)})
+        summary: dict[str, Any] = {
+            "connector": args.connector,
+            "source": "files",
+            "mode": "dry-run (nothing appended)" if args.dry_run else "ingested",
+            "results": results,
+        }
+        if not args.dry_run:
+            summary["projected"] = GraphProjector(store).run_once()
+        _print(summary)
+        return 0
+
+    source_ids: list[str] = list(args.source_id or [])
+    if not source_ids:
+        try:
+            source_ids = connector.discover(args.since)
+        except NotImplementedError as exc:
+            _print(
+                {
+                    "connector": args.connector,
+                    "stage": "discover",
+                    "wired": False,
+                    "detail": str(exc),
+                    "next": (
+                        f"implement {args.connector}.discover in "
+                        f"kc/connectors/{args.connector}.py, or pass --source-id KEY to "
+                        "ingest specific objects"
+                    ),
+                }
+            )
+            return 2
+    source_ids = source_ids[: args.limit]
+
+    results: list[dict[str, Any]] = []
+    for source_id in source_ids:
+        try:
+            obj = connector.fetch(source_id)
+        except NotImplementedError as exc:
+            _print(
+                {
+                    "connector": args.connector,
+                    "stage": "fetch",
+                    "wired": False,
+                    "source_id": source_id,
+                    "detail": str(exc),
+                    "next": f"implement {args.connector}.fetch; see the class docstring",
+                }
+            )
+            return 2
+        except Exception as exc:  # noqa: BLE001 - a wired connector failing on one object
+            results.append({"source_id": source_id, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+
+        if args.dry_run:
+            results.append(fast.plan_object(obj))
+            continue
+        try:
+            results.append(_result_row(fast.ingest_object(obj)))
+        except KCError as exc:
+            results.append(
+                {"source_id": source_id, "rejected": type(exc).__name__, "detail": str(exc)}
+            )
+
+    summary = {
+        "connector": args.connector,
+        "since": args.since,
+        "objects": len(source_ids),
+        "mode": "dry-run (nothing appended)" if args.dry_run else "ingested",
+        "results": results,
+    }
+    if not args.dry_run:
+        summary["projected"] = GraphProjector(store).run_once()
+    _print(summary)
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from kc import doctor
+
+    report = doctor.run(args.db, probe_network=not args.no_network, timeout=args.timeout)
+    _print(report)
+    return {"pass": 0, "warn": 0, "fail": 1}[report["verdict"]]
+
+
 def cmd_health(args: argparse.Namespace) -> int:
     from kc import health
 
@@ -140,6 +276,31 @@ def cmd_health(args: argparse.Namespace) -> int:
 def cmd_tasks(args: argparse.Namespace) -> int:
     store = Store(args.db)
     tasks = store.tasks(state=args.state, kind=args.kind)
+    if args.distribution:
+        # The first week's distribution is a finding in its own right: if
+        # mention_candidate dominates, the Resolver's thresholds are wrong
+        # rather than the Reconciler being needed; if staleness dominates, the
+        # TTLs are wrong. Both are cheaper than building a spoke.
+        by_kind: dict[str, dict[str, int]] = {}
+        for task in tasks:
+            row = by_kind.setdefault(task["kind"], {})
+            row[task["state"]] = row.get(task["state"], 0) + 1
+            row["total"] = row.get("total", 0) + 1
+        ranked = sorted(by_kind.items(), key=lambda kv: -kv[1]["total"])
+        _print(
+            {
+                "total": len(tasks),
+                "by_kind": dict(ranked),
+                "dominant": ranked[0][0] if ranked else None,
+                "reading": {
+                    "mention_candidate": "Resolver thresholds are wrong, not a missing spoke",
+                    "staleness": "TTL defaults are wrong (FR-14.1 re-baseline)",
+                    "contradiction": "authority matrix needs per-property overrides (FR-6.13)",
+                    "bad_answer": "retrieval shape, not knowledge coverage",
+                },
+            }
+        )
+        return 0
     _print(
         [
             {
@@ -228,7 +389,27 @@ def build_parser() -> argparse.ArgumentParser:
     tasks = sub.add_parser("tasks", help="the human queue")
     tasks.add_argument("--state", default=None)
     tasks.add_argument("--kind", default=None)
+    tasks.add_argument("--distribution", action="store_true",
+                       help="counts by kind and state, with how to read them")
     tasks.set_defaults(func=cmd_tasks)
+
+    ingest = sub.add_parser("ingest", help="drive the fast path over a connector")
+    ingest.add_argument("--connector", required=True, help="jira|confluence|git|ado")
+    ingest.add_argument("--since", default=None, help="watermark passed to discover()")
+    ingest.add_argument("--source-id", action="append", default=None,
+                        help="ingest specific objects instead of calling discover()")
+    ingest.add_argument("--from-file", action="append", default=None,
+                        help="a saved API response (JSON) to ingest without wiring fetch")
+    ingest.add_argument("--limit", type=int, default=50)
+    ingest.add_argument("--dry-run", action="store_true",
+                        help="report what would be written; append nothing")
+    ingest.set_defaults(func=cmd_ingest)
+
+    doctor = sub.add_parser("doctor", help="pre-flight checks for a locked-down machine")
+    doctor.add_argument("--no-network", action="store_true",
+                        help="skip connector reachability probes")
+    doctor.add_argument("--timeout", type=float, default=2.0)
+    doctor.set_defaults(func=cmd_doctor)
 
     work = sub.add_parser("work", help="Curator dispatches open tasks to spokes")
     work.add_argument("--limit", type=int, default=10)

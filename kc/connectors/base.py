@@ -64,6 +64,10 @@ class Connector:
     existing anchor nodes and create Document nodes (FR-6.15)."""
 
     source_system = "override-me"
+    # Environment variable holding this system's API base URL. `kc.cli doctor`
+    # reports it as configured-and-reachable, configured-and-blocked, or unset;
+    # the skeleton itself needs no network.
+    api_base_env = ""
     creates_nodes = True
     creatable_types: tuple[str, ...] = ()
     volatile_fields: tuple[str, ...] = ()
@@ -116,6 +120,24 @@ class Connector:
     def extract(self, obj: SourceObject, bu: str) -> Extraction:
         raise NotImplementedError(
             f"TODO(office): {self.source_system}.extract — see subclass docstring"
+        )
+
+    def self_check_samples(self) -> list[SourceObject]:
+        """Representative payloads for the hash-projection invariant.
+
+        Not test fixtures bolted on from outside: the invariant test enumerates
+        the registry and fails for any connector that ships without samples, so
+        a new connector cannot reach the log without declaring what its content
+        looks like. `kc.cli doctor` uses the same samples to prove extraction
+        works offline.
+
+        The invariant they support (FR-6.2): if a mutation changes anything
+        `extract` reads, `hash_projection` MUST change. The failure mode is
+        silent — content changes, the projection does not, the event is dropped,
+        nothing is ever closed, and it looks like ingestion is working.
+        """
+        raise NotImplementedError(
+            f"TODO: {self.source_system}.self_check_samples — see base class docstring"
         )
 
     # --- helpers for subclasses ---------------------------------------------

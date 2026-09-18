@@ -110,6 +110,94 @@ class FastPath:
                                  dropped=False)
         return result
 
+    def plan_object(self, obj: SourceObject) -> dict[str, Any]:
+        """What ingesting this object would write, without appending anything.
+
+        Drives the same steps as `ingest_object` up to extraction, so a dry run
+        shows the real extraction of a real ticket before any of it reaches the
+        log. Nothing here calls the Change API.
+        """
+        connector = registry.get(obj.source_system)
+        report: dict[str, Any] = {
+            "source_key": obj.source_key,
+            "source_system": obj.source_system,
+            "container": obj.container,
+        }
+        if connector is None:
+            return {**report, "decision": "no_connector"}
+
+        bu = cfg.bu_for_source(obj.source_system, obj.container)
+        report["bu_owner"] = bu
+        if bu is None:
+            return {**report, "decision": "quarantine", "reason": "UNMAPPED_CONTAINER"}
+
+        try:
+            restricted = connector.object_permissions_narrower_than_bu(obj)
+            report["permission_check"] = "applied"
+        except NotImplementedError:
+            restricted = False
+            report["permission_check"] = "not wired (TODO(office))"
+        if restricted:
+            return {**report, "decision": "skip", "reason": "OBJECT_RESTRICTED"}
+        if obj.deleted:
+            open_claims = self.store.open_claims_for_source(obj.source_key)
+            return {**report, "decision": "close_all", "would_close": len(open_claims)}
+
+        digest = connector.hash_projection(obj)
+        previous = self.store.source_hash(obj.source_key)
+        report["hash"] = digest[:16]
+        if (
+            previous
+            and previous["hash"] == digest
+            and previous["extraction_version"] == connector.extraction_version
+        ):
+            return {**report, "decision": "drop_unchanged"}
+        report["decision"] = "would_ingest"
+        report["previously_seen"] = bool(previous)
+
+        if obj.source_system == "confluence":
+            extraction = connector.extract(obj, bu, client=self.client)  # type: ignore[call-arg]
+        else:
+            extraction = connector.extract(obj, bu)
+
+        nodes: dict[str, int] = {}
+        edges: dict[str, int] = {}
+        props: dict[str, int] = {}
+        for claim in extraction.claims:
+            if claim.kind == "identity":
+                nodes[str(claim.node_type)] = nodes.get(str(claim.node_type), 0) + 1
+            elif claim.kind == "relationship":
+                edges[str(claim.edge_type)] = edges.get(str(claim.edge_type), 0) + 1
+            else:
+                key = f"{claim.node_type}.{claim.prop}"
+                props[key] = props.get(key, 0) + 1
+
+        fresh = {c.claim_id for c in extraction.claims}
+        stale = [
+            {"claim_id": c.claim_id, "kind": c.kind, "property": c.prop,
+             "edge_type": c.edge_type, "subject_id": c.subject_id}
+            for c in self.store.open_claims_for_source(obj.source_key)
+            if c.claim_id not in fresh
+        ]
+        return {
+            **report,
+            "would_write": {
+                "claims": len(extraction.claims),
+                "nodes": nodes,
+                "edges": edges,
+                "properties": props,
+                "chunks": len(extraction.chunks),
+            },
+            "would_close": stale,
+            "mentions": [m.get("name") for m in extraction.mentions][:20],
+            "llm_used": extraction.llm_used,
+            "sample_values": {
+                f"{c.node_type}.{c.prop}": c.value
+                for c in extraction.claims
+                if c.kind == "property"
+            },
+        }
+
     def ingest_claims(
         self,
         *,

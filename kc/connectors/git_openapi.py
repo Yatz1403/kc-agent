@@ -49,10 +49,15 @@ class GitConnector(Connector):
     """
 
     source_system = "git"
+    api_base_env = "KC_GIT_BASE"  # e.g. https://github.company.internal/api/v3
     creates_nodes = True
     creatable_types = ("API", "Endpoint", "Component", "TestCase", "Service")
     # Commit metadata moves on every push and says nothing about the artefact.
-    volatile_fields = ("sha", "commit", "committed_at", "last_modified", "etag", "size", "url")
+    # `committed_at` is deliberately NOT volatile: it lands in every claim's
+    # valid_from, and a field that reaches a claim cannot be excluded from the
+    # hash without making content changes invisible (FR-6.2). The invariant test
+    # in tests/test_guards.py enforces that rule for every connector.
+    volatile_fields = ("sha", "commit", "last_modified", "etag", "size", "url")
     extraction_version = "1"
 
     def extract(self, obj: SourceObject, bu: str) -> Extraction:
@@ -278,6 +283,43 @@ class GitConnector(Connector):
                 }
             )
         return out
+
+
+    def self_check_samples(self) -> list[SourceObject]:
+        spec = {
+            "openapi": "3.1.0",
+            "info": {"title": "sample-api", "version": "1.0.0"},
+            "servers": [{"url": "/v1"}],
+            "paths": {"/things/{id}": {"get": {"summary": "Read a thing"}}},
+        }
+        manifest = {"name": "sample-service", "dependencies": {"express": "^4.19.2"}}
+        return [
+            SourceObject(
+                source_system=self.source_system, source_instance="self-check",
+                source_id="acme/ledger-api:openapi.json", container="acme/ledger-api",
+                content={"path": "openapi.json", "committed_at": "2026-01-01T00:00:00+00:00",
+                         "sha": "0" * 40},
+                raw=json.dumps(spec),
+            ),
+            SourceObject(
+                source_system=self.source_system, source_instance="self-check",
+                source_id="acme/ledger-api:package.json", container="acme/ledger-api",
+                content={"path": "package.json", "sha": "1" * 40},
+                raw=json.dumps(manifest),
+            ),
+            SourceObject(
+                source_system=self.source_system, source_instance="self-check",
+                source_id="acme/ledger-api:tests/test_things.py", container="acme/ledger-api",
+                content={"path": "tests/test_things.py", "endpoint_index": {}},
+                raw="\n".join(
+                    [
+                        "def test_reads_thing(client):",
+                        '    client.get("/things/7")',
+                        "",
+                    ]
+                ),
+            ),
+        ]
 
 
 # --- pure helpers, exercised directly by tests -------------------------------

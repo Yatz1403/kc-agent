@@ -42,20 +42,35 @@ class GraphProjector:
     def apply(self, conn: sqlite3.Connection, event: sqlite3.Row) -> None:
         payload = json.loads(event["payload"])
         op = event["op"]
+        seq = int(event["seq"])
         claims = [Claim.from_row(row) for row in payload.get("claims", [])]
 
+        # The claim store is a projection like any other, so it is rebuilt from
+        # the event payload rather than assumed to be there (NFR-5). The Change
+        # API also writes claims in its own transaction, which is what gives a
+        # caller read-your-writes; both paths are idempotent because claim IDs
+        # are deterministic (FR-4.10, FR-7.9).
         subjects: set[str] = set()
         edges: set[str] = set()
         for claim in claims:
+            self.store.insert_claim(conn, claim, seq)
             if claim.kind == "relationship":
                 edges.add(claim.subject_id)
             else:
                 subjects.add(claim.subject_id)
 
+        when = payload.get("valid_to") or event["recorded_at"]
         for claim_id in payload.get("closes", []):
+            self.store.close_claim(conn, claim_id, when)
             closed = self.store.get_claim(claim_id)
             if closed is None:
-                continue
+                # A close whose claim is absent means the log is being replayed
+                # out of sequence. Projectors consume the log in order (FR-7.9),
+                # so this is a bug in the caller, not a state to paper over.
+                raise ProjectorHalted(
+                    f"close_claim references {claim_id}, which is not in the claim store: "
+                    "the log must be replayed in sequence order"
+                )
             if closed.kind == "relationship":
                 edges.add(closed.subject_id)
             else:
@@ -85,6 +100,15 @@ class GraphProjector:
                 kind="name",
             )
         elif op in {"visibility_tighten", "visibility_loosen"}:
+            # Causal, like close_claim: the node was created by an earlier
+            # event. Applying this to a node that does not exist yet would
+            # silently lose the change — the later fold would reset visibility
+            # to the type default — so it halts instead (FR-7.8).
+            if self.store.get_node(payload["node_id"], conn) is None:
+                raise ProjectorHalted(
+                    f"{op} references {payload['node_id']}, which is not projected yet: "
+                    "the log must be replayed in sequence order"
+                )
             self.store.set_node_visibility(conn, payload["node_id"], payload["visibility_class"])
             self._refold_edges_of(conn, payload["node_id"])
         elif op == "chunk_add":
@@ -209,6 +233,11 @@ class GraphProjector:
         """A merge carries its redirect in the same event, so the two cannot
         diverge (FR-4.11)."""
         node = self.store.get_node(absorbed, conn)
+        if node is None:
+            raise ProjectorHalted(
+                f"merge_nodes references {absorbed}, which is not projected yet: "
+                "the log must be replayed in sequence order"
+            )
         if node is not None:
             self.store.set_node_live(conn, absorbed, False)
             self.store.put_alias(

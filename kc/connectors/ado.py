@@ -8,6 +8,7 @@ implemented because they are content-only.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from kc.connectors.base import Connector, Extraction, SourceObject
@@ -41,6 +42,7 @@ class AdoConnector(Connector):
     """
 
     source_system = "ado"
+    api_base_env = "KC_ADO_BASE"  # e.g. https://dev.azure.com/company
     creates_nodes = True
     creatable_types = ("Requirement", "Defect", "TestCase")
     volatile_fields = (
@@ -73,6 +75,24 @@ class AdoConnector(Connector):
                                     confidence=0.85)
             )
         return out
+
+    def self_check_samples(self) -> list[SourceObject]:
+        item = {
+            "fields": {
+                "System.WorkItemType": "User Story",
+                "System.Title": "Reconciliation completes before 06:00",
+                "System.State": "Active",
+                "System.CreatedDate": "2026-01-05T00:00:00+00:00",
+            },
+            "rev": 12,
+            "System.ChangedDate": "2026-03-09T09:00:00+00:00",
+        }
+        return [
+            SourceObject(source_system=self.source_system, source_instance="self-check",
+                         source_id="4821", container="recon-area", content=item,
+                         raw=json.dumps(item)),
+        ]
+
 
     def webhook_to_source_id(self, payload: dict[str, Any]) -> str | None:
         return str((payload.get("resource") or {}).get("id") or "") or None

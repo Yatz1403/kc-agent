@@ -638,8 +638,15 @@ class Store:
         )
 
     def clear_projection(self, conn: sqlite3.Connection) -> None:
-        """Truncate every projected store. Only rebuild() calls this (NFR-5)."""
-        for table in ("nodes", "edges", "aliases", "chunks", "chunk_terms", "serve_cache"):
+        """Truncate every projected store. Only rebuild() calls this (NFR-5).
+
+        `claims` is in this list because the claim store is a projection too:
+        leaving it in place would let a rebuild appear to succeed while it was
+        really reading claims the Change API had written, which hides the fact
+        that the log alone is not enough.
+        """
+        for table in ("claims", "nodes", "edges", "aliases", "chunks", "chunk_terms",
+                      "serve_cache"):
             conn.execute(f"DELETE FROM {table}")
 
     # --- alias registry ------------------------------------------------------
@@ -866,13 +873,17 @@ class Store:
         was explicitly retracted — which is how content restricted at source
         (FR-5.9) would come back — so liveness only ever goes to 0 here. A
         chunk becomes live again only by being re-added through chunk_add.
+
+        Only nodes that exist and are dead downgrade their chunks. A chunk whose
+        node has not been projected yet is left alone: killing it here made
+        liveness depend on the order events arrived in, because a chunk_add
+        replayed before its identity claim would be marked dead and never
+        revived. The serve path already refuses a chunk whose node it cannot
+        resolve (FR-11.10), so nothing leaks by waiting.
         """
         conn.execute(
             "UPDATE chunks SET live = 0 WHERE live = 1 AND node_id IN"
             " (SELECT id FROM nodes WHERE live = 0)"
-        )
-        conn.execute(
-            "UPDATE chunks SET live = 0 WHERE live = 1 AND node_id NOT IN (SELECT id FROM nodes)"
         )
 
     def bm25_search(

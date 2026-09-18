@@ -11,6 +11,7 @@ every replay looks new and AT-1 only ever passes for byte-identical payloads.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from kc.config import loader as cfg
@@ -47,6 +48,7 @@ class JiraConnector(Connector):
     """
 
     source_system = "jira"
+    api_base_env = "KC_JIRA_BASE"  # e.g. https://company.atlassian.net
     creates_nodes = True
     creatable_types = ("Requirement", "Defect", "TestCase")
     volatile_fields = (
@@ -130,6 +132,40 @@ class JiraConnector(Connector):
                                     bu=bu, obj=obj, valid_from=valid_from, confidence=0.9)
                 )
         return out
+
+    def self_check_samples(self) -> list[SourceObject]:
+        issue = {
+            "fields": {
+                "issuetype": {"name": "Story"},
+                "summary": "Partial refunds post within one hour",
+                "status": {"name": "In Progress"},
+                "priority": {"name": "High"},
+                "created": "2026-01-02T00:00:00+00:00",
+                "description": "Acceptance: the entry appears within sixty minutes.",
+            },
+            "updated": "2026-03-09T11:00:00+00:00",
+            "watches": {"watchCount": 4},
+            "rank": "0|i0007",
+        }
+        defect = {
+            "fields": {
+                "issuetype": {"name": "Bug"},
+                "summary": "Duplicate entries on retry",
+                "status": {"name": "Open"},
+                "priority": {"name": "Critical"},
+                "created": "2026-02-02T00:00:00+00:00",
+            },
+            "updated": "2026-03-09T12:00:00+00:00",
+        }
+        return [
+            SourceObject(source_system=self.source_system, source_instance="self-check",
+                         source_id="LED-101", container="LED", content=issue,
+                         raw=json.dumps(issue)),
+            SourceObject(source_system=self.source_system, source_instance="self-check",
+                         source_id="LED-204", container="LED", content=defect,
+                         raw=json.dumps(defect)),
+        ]
+
 
     @staticmethod
     def _confidence(node_type: str, prop: str) -> float:

@@ -13,6 +13,7 @@ invented (FR-6.5).
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -56,6 +57,7 @@ class ConfluenceConnector(Connector):
     """
 
     source_system = "confluence"
+    api_base_env = "KC_CONFLUENCE_BASE"  # e.g. https://company.atlassian.net/wiki
     creates_nodes = False
     creatable_types = ("Document",)
     volatile_fields = (
@@ -178,6 +180,32 @@ class ConfluenceConnector(Connector):
             for item in grounded
         )
         return out
+
+
+    def self_check_samples(self) -> list[SourceObject]:
+        page = {
+            "title": "Ledger overview",
+            "created": "2026-01-03T00:00:00+00:00",
+            "url": "https://wiki/LEDGER-9",
+            "body": {"storage": {"value": "<h2>Overview</h2><p>ledger-api serves recon-engine.</p>"}},
+            "metadata": {"labels": {"results": [{"name": "page"}]}},
+            "version": {"number": 7},
+        }
+        adr = {
+            "title": "ADR-7 Append-only entries",
+            "created": "2026-01-04T00:00:00+00:00",
+            "body": {"storage": {"value": "<h2>Decision</h2><p>Corrections are compensating entries.</p>"}},
+            "metadata": {"labels": {"results": [{"name": "adr"}]}},
+            "version": {"number": 2},
+        }
+        return [
+            SourceObject(source_system=self.source_system, source_instance="self-check",
+                         source_id="LEDGER-9", container="LEDGER", content=page,
+                         raw=page["body"]["storage"]["value"]),
+            SourceObject(source_system=self.source_system, source_instance="self-check",
+                         source_id="LEDGER-42", container="LEDGER", content=adr,
+                         raw=adr["body"]["storage"]["value"]),
+        ]
 
 
 def chunk_html(html: str, title: str) -> list[tuple[str, str]]:
