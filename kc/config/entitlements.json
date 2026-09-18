@@ -1,0 +1,47 @@
+{
+  "_comment": "BU mappings and caller scope (FR-5.3, FR-5.10). bu_owner is never inferred by a model: a source container absent from source_containers is quarantined (FR-5.3, AT-24). The users block is demo data for the fixture; on the enterprise laptop it is replaced by IdP group claims in the on-behalf-of token (FR-5.5).",
+  "version": 1,
+  "commons": "commons",
+  "business_units": ["bu-a", "bu-b", "commons"],
+  "idp_groups": {
+    "grp-ledger-eng": ["bu-a"],
+    "grp-recon-eng": ["bu-b"],
+    "grp-platform": ["bu-a", "bu-b"],
+    "grp-everyone": ["commons"]
+  },
+  "users": {
+    "alice@bu-a": ["grp-ledger-eng", "grp-everyone"],
+    "bob@bu-b": ["grp-recon-eng", "grp-everyone"],
+    "carol@platform": ["grp-platform", "grp-everyone"],
+    "dave@nobody": ["grp-everyone"]
+  },
+  "applications": {
+    "api-testing-solution": {"scope": ["bu-a", "bu-b", "commons"], "service_scope_allowed": false},
+    "design-assistant": {"scope": ["bu-a", "commons"], "service_scope_allowed": false},
+    "kc-cli": {"scope": ["bu-a", "bu-b", "commons"], "service_scope_allowed": false},
+    "kc-batch": {"scope": ["bu-a", "bu-b", "commons"], "service_scope_allowed": true}
+  },
+  "source_containers": {
+    "jira": {
+      "LED": "bu-a",
+      "REC": "bu-b",
+      "STD": "commons"
+    },
+    "confluence": {
+      "LEDGER": "bu-a",
+      "RECON": "bu-b",
+      "ARCH": "commons"
+    },
+    "git": {
+      "acme/ledger-api": "bu-a",
+      "acme/ledger-workers": "bu-a",
+      "acme/recon-engine": "bu-b",
+      "acme/platform-standards": "commons"
+    },
+    "ado": {}
+  },
+  "teams": {
+    "team-ledger": {"bu": "bu-a", "manager": "mgr-ledger"},
+    "team-recon": {"bu": "bu-b", "manager": "mgr-recon"}
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "_comment": "Serve-path shapes (FR-11.2, FR-11.4, FR-11.6). No model is named here because the serve path has no LLM (FR-11.1).",
+  "version": 1,
+  "intents": {
+    "lookup":          {"hops": 1, "max_tokens": 2000, "fanout": 12, "tracks": ["targeted", "lexical"]},
+    "test_planning":   {"hops": 2, "max_tokens": 6000, "fanout": 24, "tracks": ["targeted", "lexical"]},
+    "design":          {"hops": 2, "max_tokens": 6000, "fanout": 24, "tracks": ["targeted", "lexical"]},
+    "impact_analysis": {"hops": 3, "max_tokens": 8000, "fanout": 32, "tracks": ["targeted", "lexical"]}
+  },
+  "edge_criticality": {
+    "DEPENDS_ON": 1.0,
+    "CALLS": 0.95,
+    "PUBLISHES_TO": 0.8,
+    "CONSUMES_FROM": 0.8,
+    "IMPLEMENTS": 0.75,
+    "PART_OF": 0.7,
+    "COVERS": 0.65,
+    "VALIDATES": 0.6,
+    "READS": 0.55,
+    "WRITES": 0.55,
+    "RAISED_AGAINST": 0.5,
+    "DEPLOYED_TO": 0.45,
+    "OWNED_BY": 0.4,
+    "DOCUMENTS": 0.35,
+    "MEMBER_OF": 0.3,
+    "EXECUTES": 0.3,
+    "DERIVED_FROM": 0.25,
+    "SUPERSEDES": 0.0
+  },
+  "hop_decay": 0.6,
+  "rrf_k": 60,
+  "bm25": {"k1": 1.2, "b": 0.75, "top_k": 25},
+  "max_anchors": 10,
+  "tokenizer": "whitespace-v1",
+  "chars_per_token": 4,
+  "gap_codes": [
+    "NO_TEST_COVERAGE", "NO_REQUIREMENT_LINK", "NO_OWNER", "CONTESTED_PROPERTY",
+    "HOP_BUDGET_REACHED", "TOKEN_CEILING_TRIMMED"
+  ],
+  "cache": {"enabled": true, "strategy": "epoch"},
+  "health_targets": {
+    "coverage": 0.8,
+    "freshness": 0.5,
+    "confidence": 0.7,
+    "gap_closure": 0.6,
+    "llm_free_ingestion": 0.85
+  },
+  "guardrails": {
+    "agent_derived_ratio_max": 0.15,
+    "source_skip_rate_max": 0.05,
+    "merge_precision_min": 0.99
+  }
+}

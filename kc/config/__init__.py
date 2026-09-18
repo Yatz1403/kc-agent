@@ -1,27 +1,42 @@
-"""Executable configuration for the knowledge model and write identities.
+"""Executable configuration: the knowledge model, identities, retrieval shapes
+and BU mappings (NFR-4). Import the questions, not the files."""
 
-The Change API validator reads these tables rather than restating them in code
-(docs/kc-agent-frs.md v0.3, FR-4.9, FR-5.2, FR-6.13, FR-7.2, FR-14.1, NFR-4).
-"""
-
-from kc.config.loader import (
-    Cardinality,
-    EdgeRule,
-    IdentityRule,
-    IdentityTable,
-    KnowledgeSchema,
-    PropertyRule,
-    load_identities,
-    load_schema,
+from kc.config.loader import (  # noqa: F401
+    application_allows_service_scope,
+    approval_policy,
+    authority_rank,
+    bu_for_source,
+    business_units,
+    bus_for_identity,
+    commons,
+    denied_identities,
+    document_subtypes,
+    dry_run_applies,
+    edge_cardinality,
+    edge_criticality,
+    edge_permitted,
+    edge_types,
+    guardrail,
+    health_target,
+    identity_constraint,
+    indexed_properties,
+    intent_budget,
+    intents,
+    is_embedded,
+    is_node_type,
+    is_single_valued,
+    is_tier_gated,
+    known_operations,
+    may,
+    node_types,
+    property_rule,
+    reload,
+    retrieval_setting,
+    team_bu,
+    team_manager,
+    tier_for,
+    tier_policy,
+    topology_edges,
+    topology_fields,
+    ttl_days,
 )
-
-__all__ = [
-    "Cardinality",
-    "EdgeRule",
-    "IdentityRule",
-    "IdentityTable",
-    "KnowledgeSchema",
-    "PropertyRule",
-    "load_identities",
-    "load_schema",
-]

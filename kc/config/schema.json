@@ -1,0 +1,82 @@
+{
+  "_comment": "Knowledge model as executable configuration. The Change API validator reads this; it is not documentation. FR-4.1, FR-4.9, FR-5.2, FR-6.8, FR-6.13, FR-14.1. Editing it is a T5 schema change (FR-7.3).",
+  "version": 1,
+  "visibility_classes": ["public", "topology", "restricted"],
+  "topology_whitelist": {
+    "fields": ["id", "type", "subtype", "name", "status", "bu_owner", "live"],
+    "edges": ["OWNED_BY"]
+  },
+  "node_types": {
+    "Service":       {"visibility": "topology",   "ttl_days": 7},
+    "Component":     {"visibility": "restricted", "ttl_days": 30},
+    "API":           {"visibility": "topology",   "ttl_days": 7},
+    "Endpoint":      {"visibility": "topology",   "ttl_days": 7},
+    "Topic":         {"visibility": "topology",   "ttl_days": 7},
+    "Requirement":   {"visibility": "restricted", "ttl_days": 30},
+    "TestCase":      {"visibility": "restricted", "ttl_days": 30},
+    "TestRun":       {"visibility": "restricted", "ttl_days": 30},
+    "Defect":        {"visibility": "restricted", "ttl_days": 30},
+    "Document":      {"visibility": "restricted", "ttl_days": 90},
+    "Environment":   {"visibility": "restricted", "ttl_days": 30},
+    "Team":          {"visibility": "topology",   "ttl_days": 30},
+    "BusinessGroup": {"visibility": "public",     "ttl_days": 30},
+    "DataEntity":    {"visibility": "restricted", "ttl_days": 30}
+  },
+  "document_subtypes": {
+    "page":          {"visibility": "restricted"},
+    "adr":           {"visibility": "restricted"},
+    "incident":      {"visibility": "restricted"},
+    "standard":      {"visibility": "public"},
+    "glossary_term": {"visibility": "public"}
+  },
+  "embedded_document_subtypes": ["page", "adr", "incident"],
+  "edges": {
+    "DEPENDS_ON":     {"from": ["Service", "Component"], "to": ["Service", "Component", "API", "DataEntity"], "cardinality": "many"},
+    "CALLS":          {"from": ["Service", "Component"], "to": ["API", "Endpoint"], "cardinality": "many"},
+    "PUBLISHES_TO":   {"from": ["Service", "Component"], "to": ["Topic"], "cardinality": "many"},
+    "CONSUMES_FROM":  {"from": ["Service", "Component"], "to": ["Topic"], "cardinality": "many"},
+    "VALIDATES":      {"from": ["TestCase"], "to": ["Requirement"], "cardinality": "many"},
+    "COVERS":         {"from": ["TestCase"], "to": ["API", "Endpoint"], "cardinality": "many"},
+    "RAISED_AGAINST": {"from": ["Defect"], "to": ["Service", "Component", "API", "Endpoint", "Requirement"], "cardinality": "many"},
+    "IMPLEMENTS":     {"from": ["Service", "Component"], "to": ["API", "Requirement"], "cardinality": "many"},
+    "OWNED_BY":       {"from": ["Service", "Component", "API", "Topic", "DataEntity", "Environment", "Document"], "to": ["Team"], "cardinality": "one"},
+    "DOCUMENTS":      {"from": ["Document"], "to": ["Service", "Component", "API", "Endpoint", "Topic", "Requirement", "TestCase", "TestRun", "Defect", "Environment", "Team", "BusinessGroup", "DataEntity"], "cardinality": "many"},
+    "SUPERSEDES":     {"from": ["Service", "Component", "API", "Endpoint", "Requirement", "Document"], "to": ["Service", "Component", "API", "Endpoint", "Requirement", "Document"], "cardinality": "many", "same_type_only": true},
+    "DERIVED_FROM":   {"from": ["Requirement", "TestCase", "DataEntity"], "to": ["Requirement", "Document", "DataEntity"], "cardinality": "many"},
+    "PART_OF":        {"pairs": [["Endpoint", "API"], ["Component", "Service"]], "cardinality": "one"},
+    "EXECUTES":       {"from": ["TestRun"], "to": ["TestCase"], "cardinality": "one"},
+    "DEPLOYED_TO":    {"from": ["Service", "Component"], "to": ["Environment"], "cardinality": "many"},
+    "MEMBER_OF":      {"from": ["Team"], "to": ["BusinessGroup"], "cardinality": "one"},
+    "READS":          {"from": ["Service", "Component", "Endpoint"], "to": ["DataEntity"], "cardinality": "many"},
+    "WRITES":         {"from": ["Service", "Component", "Endpoint"], "to": ["DataEntity"], "cardinality": "many"}
+  },
+  "properties": {
+    "*": {
+      "name":   {"cardinality": "single", "kind": "label", "max_length": 200},
+      "status": {"cardinality": "single", "kind": "enum"}
+    },
+    "API":         {"version": {"cardinality": "single", "kind": "label"}, "base_path": {"cardinality": "single", "kind": "label"}},
+    "Endpoint":    {"method": {"cardinality": "single", "kind": "enum"}, "path": {"cardinality": "single", "kind": "label"}},
+    "Requirement": {"key": {"cardinality": "multi", "kind": "label"}, "priority": {"cardinality": "single", "kind": "enum"}},
+    "Defect":      {"key": {"cardinality": "multi", "kind": "label"}, "severity": {"cardinality": "single", "kind": "enum"}},
+    "TestCase":    {"key": {"cardinality": "multi", "kind": "label"}, "framework": {"cardinality": "single", "kind": "label"}, "file_path": {"cardinality": "multi", "kind": "label"}},
+    "TestRun":     {"result": {"cardinality": "single", "kind": "enum"}, "executed_at": {"cardinality": "single", "kind": "timestamp"}},
+    "Topic":       {"broker": {"cardinality": "single", "kind": "label"}},
+    "Environment": {"tier": {"cardinality": "single", "kind": "enum"}},
+    "Document":    {"url": {"cardinality": "single", "kind": "label"}},
+    "DataEntity":  {"classification": {"cardinality": "single", "kind": "enum"}},
+    "Component":   {"ecosystem": {"cardinality": "single", "kind": "label"}, "version_spec": {"cardinality": "single", "kind": "label"}}
+  },
+  "indexed_properties": ["name", "status"],
+  "authority": {
+    "default_order": {"cmdb": 50, "git": 40, "jira": 30, "ado": 30, "confluence": 20, "chat": 10},
+    "overrides": {
+      "Requirement.status": {"jira": 60},
+      "Defect.severity": {"jira": 60},
+      "TestCase.framework": {"git": 60},
+      "TestCase.file_path": {"git": 60}
+    },
+    "human_confirmed_rank": 100,
+    "agent_penalty": 5
+  }
+}

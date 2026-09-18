@@ -1,28 +1,22 @@
 [project]
 name = "kc-agent"
 version = "0.1.0"
-description = "Enterprise Knowledge Context Agent — implementation of docs/kc-agent-frs.md v0.3"
-requires-python = ">=3.13"
-dependencies = [
-    "pydantic>=2.9",
-    "pyyaml>=6.0",
-    "psycopg[binary]>=3.2",
-]
+description = "Enterprise Knowledge Context Agent - skeleton against docs/kc-agent-frs.md"
+requires-python = ">=3.12"
+dependencies = []
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.3",
-]
+dev = ["pytest>=8.0"]
 
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["kc*"]
 
 [tool.setuptools.package-data]
-"kc.config" = ["*.yaml"]
+"kc.config" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

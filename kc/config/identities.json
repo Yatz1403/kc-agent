@@ -1,0 +1,82 @@
+{
+  "_comment": "Write identities (FR-7.2) and autonomy tiers (FR-7.3). An identity absent from 'identities' may append nothing: no wildcard, no default-allow (AT-4).",
+  "version": 1,
+  "operations": [
+    "add_claim", "update_claim_same_source", "close_claim", "supersede_claim_cross_source",
+    "merge_nodes", "split_node", "source_key_mapping", "alias_rule", "chunk_add",
+    "chunk_retract", "visibility_tighten", "visibility_loosen", "quality_signal",
+    "rollback", "config_change_record", "schema_change", "bulk_reprocess", "erasure"
+  ],
+  "identities": {
+    "kc-ingest": {
+      "description": "Fast path. Deterministic ingestion and grounded free-text extraction.",
+      "tier_gated": false,
+      "dry_run_applies": false,
+      "may": ["add_claim", "update_claim_same_source", "close_claim", "source_key_mapping",
+              "chunk_add", "chunk_retract", "visibility_tighten"],
+      "constraints": {"own_source_objects_only": true}
+    },
+    "kc-curator": {
+      "description": "Applies proposals that passed gate.evaluate (FR-7.14).",
+      "tier_gated": true,
+      "dry_run_applies": true,
+      "may": ["add_claim", "close_claim", "supersede_claim_cross_source", "merge_nodes",
+              "split_node", "alias_rule", "visibility_loosen", "quality_signal"],
+      "constraints": {"requires_gate_decision": true, "requires_base_version": true}
+    },
+    "kc-maintenance": {
+      "description": "Nightly staleness sweep and other T1 signals (FR-14.1).",
+      "tier_gated": false,
+      "dry_run_applies": false,
+      "may": ["quality_signal"],
+      "constraints": {"t1_only": true}
+    },
+    "kc-review": {
+      "description": "Applies proposals a human approved or modified (FR-9.14).",
+      "tier_gated": false,
+      "dry_run_applies": false,
+      "may": ["add_claim", "close_claim", "supersede_claim_cross_source", "merge_nodes",
+              "split_node", "alias_rule", "visibility_loosen", "visibility_tighten"],
+      "constraints": {"requires_review_decision": true, "requires_base_version": true,
+                      "provenance_class": "human-confirmed"}
+    },
+    "kc-operator": {
+      "description": "Rollback, configuration records and T5 actions.",
+      "tier_gated": false,
+      "dry_run_applies": false,
+      "may": ["rollback", "config_change_record", "schema_change", "bulk_reprocess",
+              "erasure", "visibility_tighten"],
+      "constraints": {"requires_change_record": true}
+    }
+  },
+  "denied": ["kc-resolver", "kc-reconciler", "kc-verifier", "kc-prospector",
+             "kc-retrieval-critic", "kc-schema-steward", "consumer-app"],
+  "tiers": {
+    "quality_signal": "T1",
+    "add_claim": "T2",
+    "chunk_add": "T2",
+    "chunk_retract": "T2",
+    "update_claim_same_source": "T2",
+    "close_claim": "T3",
+    "supersede_claim_cross_source": "T3",
+    "merge_nodes": "T3",
+    "split_node": "T3",
+    "alias_rule": "T4",
+    "visibility_loosen": "T4",
+    "cross_bu_edge": "T4",
+    "schema_change": "T5",
+    "bulk_reprocess": "T5",
+    "erasure": "T5"
+  },
+  "tier_policy": {
+    "auto": ["T1", "T2"],
+    "threshold_gated": ["T3"],
+    "human_always": ["T4", "T5"],
+    "t3_confidence_threshold": 0.85,
+    "dry_run_default": true
+  },
+  "approval": {
+    "expiry_business_days": 5,
+    "cross_bu_policy": "approver_per_affected_bu"
+  }
+}
